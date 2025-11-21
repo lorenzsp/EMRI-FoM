@@ -1,6 +1,7 @@
 # EMRI Figures of Merit (FoMs) Computation
 
-This repository contains codes for computing Figures of Merit (FoMs) related to Extreme Mass Ratio Inspirals (EMRIs) and Intermedia Mass Ratio Inspirals (IMRIs).
+This repository contains codes for computing Figures of Merit (FoMs) related to Extreme Mass Ratio Inspirals (EMRIs) and Intermediat Mass Ratio Inspirals (IMRIs). The codes contained in this repository are meant to be run on GPUs and a singularity image can be found [here](https://public.spider.surfsara.nl/project/lisa_nlddpc/emri_fom_container/).
+
 
 ![SNR Figure of Merit Example](pipeline/requirements_results/error_distribution_absolute_errors_a.png)
 ![PE Figure of Merit Example](pipeline/requirements_results/snr_redshift_requirement_allspins.png)
@@ -77,4 +78,59 @@ Test the pipeline
 ```
 cd pipeline
 python pipeline.py --M 1e6 --mu 1e1 --a 0.5 --e_f 0.1 --T 4.0 --z 0.5 --psd_file TDI2_AE_psd.npy --dt 10.0 --use_gpu --N_montecarlo 1 --device 0 --power_law --repo test_acc --calculate_fisher 1
+```
+
+### Instructions for container on Spider
+
+Connect to GPU partition ```srun -p gpu_a100_22c --pty bash -i -l``` or ```srun -p gpu_a100_7c --gpus=a100:1 --pty bash -i -l```. 
+
+#### Container Construction
+Build a container using `singularity build --nv --fakeroot fom_final.sif fom.def` or an editable container with:
+```
+singularity build --sandbox --nv --fakeroot fom fom.def
+```
+
+To edit an editable container `fom` open a shell:
+```
+singularity shell --writable --nv --fakeroot fom
+```
+
+Then you can install your favorite packages:
+```
+python3 -m pip install --upgrade pip
+python -m pip install --no-cache-dir nvidia-cuda-runtime-cu12 astropy eryn fastemriwaveforms-cuda12x multiprocess optax matplotlib scipy jupyter interpax numba Cython lisaanalysistools tabulate scienceplots
+python3 -c "import few; few.get_backend('cuda12x'); print('FEW installation successful')"
+
+# Set compilers explicitly and unset conda variables
+unset CC CXX CUDACXX
+export CC=/usr/bin/gcc
+export CXX=/usr/bin/g++
+export CUDACXX=/usr/local/cuda/bin/nvcc
+export NVCC_PREPEND_FLAGS='-ccbin /usr/bin/g++'
+
+# install lisa on gpu and StableEMRIFisher-package
+git clone https://github.com/cchapmanbird/EMRI-FoM.git emri_fom_temp
+cd emri_fom_temp/lisa-on-gpu/
+python3 setup.py install
+cd ../StableEMRIFisher-package/
+python -m pip install .
+cd ..
+python3 -m unittest test_waveform_and_response.py
+```
+
+Convert to editable container `fom` into a final image you can run
+```
+singularity build fom_final.sif fom
+```
+
+Test final image using
+```
+singularity exec --nv fom_final.sif python -m unittest test_waveform_and_response.py
+```
+An already built image can be found [here](https://public.spider.surfsara.nl/project/lisa_nlddpc/emri_fom_container/).
+
+Use the final image
+```
+cd pipeline
+singularity exec --nv ../fom_final.sif python pipeline.py --M 1e6 --mu 1e1 --a 0.5 --e_f 0.1 --T 4.0 --z 0.5 --psd_file TDI2_AE_psd.npy --dt 10.0 --use_gpu --N_montecarlo 1 --device 0 --power_law --repo test_acc --calculate_fisher 1
 ```
