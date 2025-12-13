@@ -1,17 +1,16 @@
 # EMRI Figures of Merit (FoMs) Computation
 
-This repository contains codes for computing Figures of Merit (FoMs) related to Extreme Mass Ratio Inspirals (EMRIs) and Intermediat Mass Ratio Inspirals (IMRIs). The codes contained in this repository are meant to be run on GPUs and a singularity image can be found [here](https://public.spider.surfsara.nl/project/lisa_nlddpc/emri_fom_container/).
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/cchapmanbird/EMRI-FoM/main?filepath=pipeline/degradation_analysis.ipynb)
 
+This repository contains codes for computing Figures of Merit (FoMs) related to Extreme Mass Ratio Inspirals (EMRIs) and Intermediat Mass Ratio Inspirals (IMRIs) for the LISA mission. The codes contained in this repository are meant to be run on GPUs. We provide below information on the installation and how to create a singularity image. An already prepared singularity image can be found at [here](https://public.spider.surfsara.nl/project/lisa_nlddpc/emri_fom_container/).
 
-![SNR Figure of Merit Example](pipeline/requirements_results/error_distribution_absolute_errors_a.png)
-![PE Figure of Merit Example](pipeline/requirements_results/snr_redshift_requirement_allspins.png)
+## Interactive Notebooks
 
-TODO:
-- Create requirements for parameter estimation and upload everything in SO3 https://gitlab.in2p3.fr/LISA/lisa-fom/-/tree/develop?ref_type=heads
-- Quadrupole moment https://arxiv.org/abs/gr-qc/0612029 , mapping in eq 43 of https://arxiv.org/pdf/gr-qc/0510129
-- Check Fisher Information Stability and update with Shubham folder
-- Update response to newest one (Maybe? we can also keep the old response)
-- Check installation instructions
+Try the **[FOM Analysis](pipeline/degradation_analysis.ipynb)** notebook interactively in Binder (no installation required) by clicking the badge above, or view it with better rendering on [nbviewer](https://nbviewer.jupyter.org/github/cchapmanbird/EMRI-FoM/blob/main/pipeline/degradation_analysis.ipynb).
+
+![SNR Figure of Merit Example](pipeline/snr_at_z.png)
+
+![PE Figure of Merit Example](pipeline/precision_vs_m1_relative_precision_m1.png)
 
 ## Installation Instructions
 
@@ -82,7 +81,9 @@ python pipeline.py --M 1e6 --mu 1e1 --a 0.5 --e_f 0.1 --T 4.0 --z 0.5 --psd_file
 
 ### Instructions for container on Spider
 
-Connect to GPU partition ```srun -p gpu_a100_22c --pty bash -i -l``` or ```srun -p gpu_a100_7c --gpus=a100:1 --pty bash -i -l```. 
+Connect to GPU partition `srun -p gpu_a100_22c --mem 64G -G a100:1 -c 2 --pty bash` or `srun -p gpu_a100_7c --gpus=a100:1 --pty bash -i -l` or `srun --partition gpu_a100_mig --gpus 1 -c 1 --pty bash`.
+
+The `--pty` flag allocates a pseudo-terminal, enabling interactive shell sessions with proper terminal behavior (like command editing and job control). 
 
 #### Container Construction
 Build a container using `singularity build --nv --fakeroot fom_final.sif fom.def` or an editable container with:
@@ -97,9 +98,9 @@ singularity shell --writable --nv --fakeroot fom
 
 Then you can install your favorite packages:
 ```
-python3 -m pip install --upgrade pip
-python -m pip install --no-cache-dir nvidia-cuda-runtime-cu12 astropy eryn fastemriwaveforms-cuda12x multiprocess optax matplotlib scipy jupyter interpax numba Cython lisaanalysistools tabulate scienceplots
-python3 -c "import few; few.get_backend('cuda12x'); print('FEW installation successful')"
+python -m pip install --upgrade pip
+python -m pip install --no-cache-dir nvidia-cuda-runtime-cu12 astropy eryn fastemriwaveforms-cuda12x multiprocess optax matplotlib scipy jupyter interpax numba Cython lisaanalysistools tabulate scienceplots healpy pandas filelock
+python -c "import few; few.get_backend('cuda12x'); print('FEW installation successful')"
 
 # Set compilers explicitly and unset conda variables
 unset CC CXX CUDACXX
@@ -111,11 +112,11 @@ export NVCC_PREPEND_FLAGS='-ccbin /usr/bin/g++'
 # install lisa on gpu and StableEMRIFisher-package
 git clone https://github.com/cchapmanbird/EMRI-FoM.git emri_fom_temp
 cd emri_fom_temp/lisa-on-gpu/
-python3 setup.py install
+python setup.py install
 cd ../StableEMRIFisher-package/
 python -m pip install .
 cd ..
-python3 -m unittest test_waveform_and_response.py
+python -m unittest test_waveform_and_response.py
 ```
 
 Convert to editable container `fom` into a final image you can run
@@ -133,4 +134,15 @@ Use the final image
 ```
 cd pipeline
 singularity exec --nv ../fom_final.sif python pipeline.py --M 1e6 --mu 1e1 --a 0.5 --e_f 0.1 --T 4.0 --z 0.5 --psd_file TDI2_AE_psd.npy --dt 10.0 --use_gpu --N_montecarlo 1 --device 0 --power_law --repo test_acc --calculate_fisher 1
+```
+
+### Virtual environment
+```
+srun --partition=short --time=12:00:00 --pty bash -i -l
+python -m venv fom_venv/
+source fom_venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install --no-cache-dir nvidia-cuda-runtime-cu12 astropy eryn fastemriwaveforms-cuda12x multiprocess optax matplotlib scipy jupyter interpax numba Cython lisaanalysistools tabulate scienceplots healpy pandas filelock
+jupyter lab --ip="*" --no-browser
+ssh -NL 8888:wn-la-01:8888 spider
 ```

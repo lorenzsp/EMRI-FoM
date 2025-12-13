@@ -20,11 +20,12 @@ from common import CosmoInterpolator
 import time
 import matplotlib.pyplot as plt
 from stableemrifisher.plot import CovEllipsePlot, StabilityPlot
-from waveform_utils import initialize_waveform_generator, transf_log_e_wave, generate_random_phases, generate_random_sky_localization
+from waveform_utils import initialize_waveform_generator, transf_log_e_wave, generate_random_phases, generate_random_sky_localization, wave_windowed_truncated
 from few.utils.geodesic import get_fundamental_frequencies
 from scipy.signal.windows import tukey
 #psd stuff
 from psd_utils import load_psd, get_psd_kwargs
+import h5py
 
 cosmo = CosmoInterpolator()
 
@@ -73,31 +74,6 @@ def initialize_gpu(args):
 
 from scipy.signal import get_window
 from matplotlib.colors import LogNorm
-
-class wave_windowed_truncated():
-    def __init__(self, wave_gen, N, dt, xp, window_fn=('tukey', 0.005), fmin=0.0, fmax=1.0):
-        self.wave_gen = wave_gen
-        self.window_fn = window_fn
-        self.window = xp.asarray(get_window(self.window_fn, N))
-        self.frequency = xp.fft.rfftfreq(N, dt)
-        self.mask = (self.frequency > fmin) * (self.frequency < fmax)
-        self.xp = xp
-        self.N = N
-    
-    def __call__(self, *args, **kwargs):
-        wave = xp.asarray(self.wave_gen(*args, **kwargs))
-        # take fft
-        wave_fft = self.xp.fft.rfft(wave,axis=1)
-        wave_fft[:,~self.mask] = 0.0 + 1j*0.0
-        # take ifft
-        wave = self.xp.fft.irfft(wave_fft,axis=1, n=self.N)
-        # apply window
-        wave = wave * self.window
-        return wave
-
-    def __getattr__(self, name):
-        # Forward attribute access to base_wave
-        return getattr(self.wave_gen, name)
     
 
 class KerrEccEqFluxPowerLaw(KerrEccEqFlux):
@@ -143,18 +119,21 @@ if __name__ == "__main__":
     param_names = np.array(['M','mu','a','p0','e0','xI0','dist','qS','phiS','qK','phiK','Phi_phi0','Phi_theta0','Phi_r0', 'A', 'nr'])
     
     popinds = []
-    popinds.append(5)
-    popinds.append(12)
+    popinds.append(5) # xI0
+    popinds.append(12) # Phi_theta0
     
     if args.power_law:
-        popinds.append(4)
-        popinds.append(13)
-        popinds.append(15)
+        popinds.append(4) # eccentricity
+        popinds.append(13) # Phi_r0
+        popinds.append(15) # nr
     
     else:
-        popinds.append(14)
-        popinds.append(15)
-                    
+        popinds.append(14) # A
+        popinds.append(15) # nr
+        if args.e_f == 0.0:
+            popinds.append(4)
+            popinds.append(13)
+        
     param_names = np.delete(param_names, popinds).tolist()
     
     # PSD
@@ -177,11 +156,15 @@ if __name__ == "__main__":
         e_f = 0.0
     else:
         e_f = args.e_f
+    
     x0_f = 1.0 * np.sign(args.a) if args.a != 0.0 else 1.0
-    if args.power_law:
-        p_f = KerrEccEqFluxPowerLaw().min_p(e=e_f, x=x0_f, a=a) + 0.5
-    else:
-        p_f = KerrEccEqFluxPowerLaw().min_p(e=e_f, x=x0_f, a=a) + 0.1
+    
+    traj = EMRIInspiral(func=KerrEccEqFluxPowerLaw)
+    # if args.power_law:
+    #     p_f = KerrEccEqFluxPowerLaw().min_p(e=e_f, x=x0_f, a=a) + 0.5
+    # else:
+    #     # p_f = KerrEccEqFluxPowerLaw().min_p(e=e_f, x=x0_f, a=a) + 0.1
+    p_f = traj.func.min_p(e_f, x0_f, a)
     dist = cosmo.get_luminosity_distance(args.z)
     print("Distance in Gpc", dist)
     # observation time
@@ -193,12 +176,23 @@ if __name__ == "__main__":
     T = args.T
 
     # initialize the trajectory
-    traj = EMRIInspiral(func=KerrEccEqFluxPowerLaw)
     print("Generating backward trajectory")
     t_forward, p_forward, e_forward, x_forward, Phi_phi_forward, Phi_r_forward, Phi_theta_forward = traj(M, mu, a, p_f, e_f, x0_f, A, nr, dt=1e-5, T=100.0, integrate_backwards=False)
     t_back, p_back, e_back, x_back, Phi_phi_back, Phi_r_back, Phi_theta_back = traj(M, mu, a, p_forward[-1], e_forward[-1], x_forward[-1], A, nr, dt=1e-5, T=Tpl, integrate_backwards=True)
     # and forward trajectory to check the evolution
     t_plot, p_plot, e_plot, x_plot, Phi_phi_plot, Phi_r_plot, Phi_theta_plot = traj(M, mu, a, p_back[-1], e_back[-1], x_back[-1], A, nr, dt=1e-5, T=T, integrate_backwards=False)
+    # save information about the trajectory in h5 file
+    with h5py.File(os.path.join(args.repo, "trajectory.h5"), "w") as f:
+        f.create_dataset("t_plot", data=t_plot)
+        f.create_dataset("p_plot", data=p_plot)
+        f.create_dataset("e_plot", data=e_plot)
+        f.create_dataset("x_plot", data=x_plot)
+        f.create_dataset("Phi_phi_plot", data=Phi_phi_plot)
+        f.create_dataset("Phi_r_plot", data=Phi_r_plot)
+        f.create_dataset("Phi_theta_plot", data=Phi_theta_plot)
+    
+    T = t_plot[-1]/YRSID_SI
+    print("Total observation time in years:", T)
     # Plot (t, p), (t, e), (p, e), (t, Phi_phi)
     fig, axs = plt.subplots(2, 2, figsize=(12, 8))
 
@@ -228,7 +222,7 @@ if __name__ == "__main__":
 
     plt.tight_layout()
     plt.savefig(os.path.join(args.repo, "trajectory_subplots.png"))
-    plt.close(fig)
+    plt.close('all')
     print("Found initial conditions", p_back[-1], e_back[-1], x_back[-1])
     omegaPhi, omegaTheta, omegaR = get_fundamental_frequencies(a, p_back, e_back, x_back)
     dimension_factor = 2.0 * np.pi * M * MTSUN_SI
@@ -240,10 +234,11 @@ if __name__ == "__main__":
     p0, e0, x0 = p_back[-1], e_back[-1], x_back[-1]
     print("p0, e0, x0", p0, e0, x0)
     # initialiaze the waveform generator
-    temp_model = initialize_waveform_generator(T, args, inspiral_kwargs_forward)
+    temp_model = initialize_waveform_generator(T, args.dt, inspiral_kwargs_forward)
     # base waveform has always the same parameters for comparison
     Phi_phi0, Phi_r0, Phi_theta0 = 0.0, 0.0, 0.0# generate_random_phases()
     qS, phiS, qK, phiK = np.pi/3, np.pi/3, np.pi/3, np.pi/3 # generate_random_sky_localization()
+    print(phiK,phiS)
     parameters = np.asarray([M, mu, a, p0, e0, x0, dist, qS, phiS, qK, phiK, Phi_phi0, Phi_theta0, Phi_r0, A, nr])
     # evaluate waveform
     temp_model(*parameters, mode_selection_threshold=1e-5)
@@ -254,22 +249,24 @@ if __name__ == "__main__":
     timing = toc - tic
     print("Time taken for one waveform generation: ", timing)
     print("\n")
+    
     # define frequency ranges for inner product
     ns = temp_model.waveform_gen.waveform_generator.ns
     ms = temp_model.waveform_gen.waveform_generator.ms
     ls = temp_model.waveform_gen.waveform_generator.ls
     max_f = float(np.max(np.abs(omegaPhi[None,:] * ms.get()[:,None] + omegaR[None,:] * ns.get()[:,None]))) * 1.01 # added a 1% safety factor
+    min_f = float(np.min(np.abs(omegaPhi[None,:] * ms.get()[:,None] + omegaR[None,:] * ns.get()[:,None]))) * 0.99 # added a 1% safety factor
     # define modes for waveform
     waveform_kwargs = {"mode_selection": [(ll,mm,nn) for ll,mm,nn in zip(ls.get(), ms.get(), ns.get())],}
+    print("Number of modes in the waveform:", len(waveform_kwargs["mode_selection"]))
     # create a waveform that is windowed and truncated 
     test_1 = np.sum(np.abs(temp_model(*parameters, **waveform_kwargs)[0] - temp_model(*parameters, mode_selection=[(2,2,0)])[0]))
     test_2 = np.sum(np.abs(temp_model(*parameters, **waveform_kwargs)[0] - waveform_out[0]))
     print("Test 1: ", test_1 !=0.0, "\nTest 2: ", test_2 == 0.0)
     # update the model with the windowed and truncated waveform
-    fmin=1e-4
-    fmax=max_f
-    model = temp_model # wave_windowed_truncated(temp_model, len(waveform_out[0]), args.dt, xp, window_fn=('tukey', 0.01), fmin=fmin, fmax=fmax)
-    model(*parameters)
+    fmin = np.max([0.5e-4, min_f])
+    fmax = np.min([1.0, 1/(args.dt*2), max_f])
+    model = wave_windowed_truncated(temp_model, xp, t0=100000.0)
     tic = time.time()
     waveform_out = model(*parameters)
     toc = time.time()
@@ -284,16 +281,17 @@ if __name__ == "__main__":
 
     fft_waveform = xp.fft.rfft(waveform_out[0]).get() * args.dt
     freqs = np.fft.rfftfreq(len(waveform_out[0]), d=args.dt)
-    mask = (freqs>1e-5)
+    mask = (freqs>fmin) & (freqs<fmax)
     plt.figure()
-    plt.loglog(freqs[mask], np.abs(fft_waveform)[mask]**2)
+    
+    plt.loglog(freqs[mask], np.abs(fft_waveform)[mask]**2 / (len(waveform_out[0]) * args.dt), label="Waveform")
     plt.loglog(freqs[mask], np.atleast_2d(psd_wrap(freqs[mask]).get())[0], label="PSD")
     plt.xlabel("Frequency [Hz]")
-    plt.ylabel(r"Amplitude $|\tilde h(f)|$")
+    plt.ylabel(r"Amplitude $|\tilde h(f)| df$")
     plt.legend()
-    plt.ylim(1e-45, 1e-35)
+    plt.ylim(1e-45, 1e-32)
     plt.savefig(os.path.join(args.repo, "waveform_frequency_domain.png"))
-    # Plot waveform in time domain
+    
     plt.figure()
     plt.plot(np.arange(len(waveform_out[0].get())) * args.dt, waveform_out[0].get(), label="A")
     plt.plot(np.arange(len(waveform_out[0].get())) * args.dt, waveform_out[1].get(), label="E", alpha=0.7)
@@ -307,14 +305,15 @@ if __name__ == "__main__":
     plt.figure()
     plt.specgram(waveform_out[0].get(), NFFT=int(86400/args.dt), Fs=1/args.dt, noverlap=128, scale='dB', cmap='viridis')
     plt.yscale('log')
-    plt.ylim(1e-5, 1e-1)  # Adjust y-axis limits for better visibility
+    plt.ylim(5e-5, 0.0)  # Adjust y-axis limits for better visibility
     plt.xlabel("Time [s]")
     plt.ylabel("Frequency [Hz]")
     plt.title("Spectrogram (Real part)")
     plt.colorbar(label='Intensity [dB]')
     plt.tight_layout()
     plt.savefig(os.path.join(args.repo, "waveform_spectrogram.png"))
-    # plt.close("all")
+    plt.close("all")
+    
     # check horizon d_L
     # d_L = inner_product(waveform_out, waveform_out, psd_wrap(freqs[1:]), dt=args.dt, use_gpu=args.use_gpu)**0.5/20.
     # redshift = get_redshift(d_L)
@@ -322,7 +321,7 @@ if __name__ == "__main__":
     # source_frame_m2 = parameters[1] / (1 + redshift)
     # plt.figure(); plt.loglog(redshift, d_L); plt.xlabel("Redshift"); plt.grid(); plt.savefig(os.path.join(args.repo, "snr_vs_redshift.png"))
     # if low eccentricity, use the log_e transformation
-    if args.e_f < 1e-3 and not args.power_law:
+    if (args.e_f != 0.0):
         log_e = True
     else:
         print("Working in non log_e")
@@ -342,6 +341,7 @@ if __name__ == "__main__":
         # generate random parameters
         Phi_phi0, Phi_r0, Phi_theta0 = generate_random_phases()
         qS, phiS, qK, phiK = generate_random_sky_localization()
+        print(phiK,phiS)
         # update the parameters
         parameters = np.asarray([M, mu, a, p0, e0, x0, dist, qS, phiS, qK, phiK, Phi_phi0, Phi_theta0, Phi_r0, A, nr])
 
@@ -357,8 +357,16 @@ if __name__ == "__main__":
             der_order = 4.0
 
 
-        fish = StableEMRIFisher(*parameters[:-2], add_param_args = {"A": A, "nr": nr}, fmin=fmin, fmax=fmax,
-                                dt=args.dt, T=T, EMRI_waveform_gen=EMRI_waveform_gen, noise_model=psd_wrap, noise_kwargs=dict(TDI="TDI2"), channels=["A", "E"], param_names=param_names, stats_for_nerds=False, use_gpu=args.use_gpu, 
+        fish = StableEMRIFisher(*parameters[:-2], 
+                                add_param_args = {"A": A, "nr": nr}, 
+                                fmin=fmin, fmax=fmax,
+                                dt=args.dt, T=T, 
+                                EMRI_waveform_gen=EMRI_waveform_gen, 
+                                noise_model=psd_wrap, 
+                                noise_kwargs=dict(TDI="TDI2"), 
+                                channels=["A", "E"], 
+                                param_names=param_names, 
+                                stats_for_nerds=False, use_gpu=args.use_gpu, 
                                 der_order=der_order, Ndelta=20, filename=current_folder,
                                 deltas = deltas,
                                 log_e = log_e, # useful for sources close to zero eccentricity
@@ -369,7 +377,18 @@ if __name__ == "__main__":
                                 )
         # calculate the SNR
         SNR = fish.SNRcalc_SEF()
-        np.savez(os.path.join(current_folder, "snr.npz"), snr=SNR, parameters=parameters, redshift=args.z, e_f=args.e_f, Tplunge=T)
+        
+        accumulation_index = np.arange(len(waveform_out[0])//20,len(waveform_out[0]),len(waveform_out[0])//20, dtype=int)
+
+        np.savez(os.path.join(current_folder, "snr.npz"), snr=SNR, parameters=parameters, redshift=args.z, e_f=args.e_f, Tplunge=T, names=param_names)
+        # save to h5 file
+        with h5py.File(os.path.join(current_folder, "snr.h5"), "w") as f:
+            f.create_dataset("snr", data=SNR)
+            f.create_dataset("parameters", data=parameters)
+            f.create_dataset("param_names", data=param_names)
+            f.create_dataset("redshift", data=args.z)
+            f.create_dataset("e_f", data=args.e_f)
+            f.create_dataset("T", data=T)
         
         calculate_fisher = bool(args.calculate_fisher)
         if args.calculate_fisher:
@@ -394,7 +413,11 @@ if __name__ == "__main__":
             if args.power_law:
                 J = cosmo.jacobian_powerlaw(M / (1 + args.z), mu / (1 + args.z), args.z)
             else:
-                J = cosmo.jacobian(M / (1 + args.z), mu / (1 + args.z), args.z)
+                if e_f == 0.0:
+                    # remove last row and column corresponding to amplitude of powerlaw
+                    J = cosmo.jacobian_powerlaw(M / (1 + args.z), mu / (1 + args.z), args.z)[:-1,:-1]
+                else:
+                    J = cosmo.jacobian(M / (1 + args.z), mu / (1 + args.z), args.z)
             source_frame_cov = J @ cov @ J.T
 
             if j == 0:
@@ -415,13 +438,38 @@ if __name__ == "__main__":
             errors_df = pd.DataFrame(errors_df)
             errors_df.to_markdown(os.path.join(current_folder, "summary.md"), floatfmt=".10e")
             # save the covariance matrix and the SNR to npz file
-            Sigma = cov[6:8, 6:8]
+            ind_sky = [param_names.index('qS'), param_names.index('phiS')]
+            Sigma = cov[ind_sky[0]:ind_sky[1]+1, ind_sky[0]:ind_sky[1]+1]
             err_sky_loc = 2 * np.pi * np.sin(qS) * np.sqrt(np.linalg.det(Sigma)) * (180.0 / np.pi) ** 2
             np.savez(os.path.join(current_folder, "results.npz"), gamma=fim, cov=cov, snr=SNR, fisher_params=fisher_params, errors=errors, relative_errors=relative_errors, names=param_names, source_frame_cov=source_frame_cov, err_sky_loc=err_sky_loc, redshift=args.z, e_f=args.e_f)
+            # save to h5 file
+            with h5py.File(os.path.join(current_folder, "results.h5"), "w") as f:
+                f.create_dataset("gamma", data=fim)
+                f.create_dataset("cov", data=cov)
+                f.create_dataset("snr", data=SNR)
+                f.create_dataset("fisher_params", data=fisher_params)
+                f.create_dataset("relative_errors", data=relative_errors)
+                f.create_dataset("errors", data=errors)
+            
             print("Saved results to", current_folder)
             print("*************************************")
             
-
+    # Plot waveform snr accumulation over time
+    N = len(waveform_out[0])
+    accumulation_index = np.arange(N//10,len(waveform_out[0]), N//10, dtype=int)
+    accumulation_time = accumulation_index * args.dt
+    snr_accumation = [inner_product(waveform_out[:,:ii],waveform_out[:,:ii], psd_wrap(np.fft.rfftfreq(len(waveform_out[0][:ii]), d=args.dt)[1:]), args.dt, fmin = fmin, fmax = fmax, use_gpu=args.use_gpu)**0.5 for ii in accumulation_index]
+    snr_accumation = np.array(snr_accumation)
+    
+    plt.figure()
+    plt.plot(accumulation_time, snr_accumation, 'o')
+    plt.xlabel('t')
+    plt.ylabel('SNR(t)')
+    plt.title('Accumulated SNR over time')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(args.repo, "accumulated_snr.png"))
+    plt.close("all")
     
     end_script = time.time()
     print("Total time taken for the script: ", end_script - start_script)
