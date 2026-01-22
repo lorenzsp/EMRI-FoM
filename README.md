@@ -57,8 +57,7 @@ Our analysis provides quantitative insights into LISA's EMRI/IMRI science capabi
 
 ### Quick Start (No Installation)
 
-The easiest way to explore the analysis is through our interactive Jupyter notebook:
-- **[Launch in Binder](https://mybinder.org/v2/gh/lorenzsp/EMRI-FoM/main?filepath=pipeline/degradation_analysis.ipynb)** - Run directly in your browser
+The easiest way to explore the analysis is through our [interactive Jupyter notebook](https://mybinder.org/v2/gh/lorenzsp/EMRI-FoM/main?filepath=pipeline/degradation_analysis.ipynb).
 
 ### Local Installation
 
