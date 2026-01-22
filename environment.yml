@@ -1,3 +1,4 @@
+# test binder
 name: emri-fom
 channels:
   - conda-forge
