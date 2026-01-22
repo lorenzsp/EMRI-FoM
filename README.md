@@ -21,6 +21,8 @@ We quantify LISA's capability to:
 
 **Try it yourself!** Explore how LISA sensitivity changes affect EMRI/IMRI detection and parameter estimation using our [**interactive notebook**](https://mybinder.org/v2/gh/lorenzsp/EMRI-FoM/main?filepath=pipeline/degradation_analysis.ipynb). No installation required - just click the Binder badge above to launch in your browser.
 
+**Note:** Binder environments are pre-built using GitHub Actions, so launch time is typically under 1 minute. If you see a longer build time, the container may be updating with recent changes.
+
 ### Using This Work
 
 **If you use any material from this repository** (code, data, figures, or results) in your research, please cite our work. See the [Citation](#citation) section below for details.
@@ -270,6 +272,27 @@ jupyter lab --ip="*" --no-browser
 # On local machine, create SSH tunnel:
 # ssh -NL 8888:wn-la-01:8888 spider
 ```
+
+---
+
+## Binder Performance Optimization
+
+This repository uses **pre-built Docker containers** to significantly reduce Binder launch time:
+
+- **GitHub Actions** automatically builds and pushes a Docker image whenever `requirements.txt` or key files change
+- **Binder** pulls the pre-built image from GitHub Container Registry instead of building from scratch
+- **Result**: Launch time reduced from 5-10 minutes to typically under 1 minute
+
+The workflow is defined in [`.github/workflows/binder-build.yml`](.github/workflows/binder-build.yml) and uses [`repo2docker`](https://repo2docker.readthedocs.io/) to create the same environment that Binder would build.
+
+### For Maintainers
+
+After updating `requirements.txt`:
+1. Commit and push changes to the `main` branch
+2. GitHub Actions will automatically rebuild and push the Docker image
+3. Subsequent Binder launches will use the updated pre-built image
+
+To manually trigger a rebuild, go to the [Actions tab](../../actions/workflows/binder-build.yml) and click "Run workflow".
 
 ---
 
